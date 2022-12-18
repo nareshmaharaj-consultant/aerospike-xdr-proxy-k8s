@@ -1,5 +1,8 @@
 
+<p align="center">
+<img width="200" src="http://material-bread.org/logo-shadow.svg" alt="Material Bread logo">
 ![img_3.png](img_3.png)
+</p>
 
 In this article we focus on establishing 2 separate Kubernetes clusters both each hosting the Aerospike low latency database. The goal is to be able to use Aerospike's Cross Data centre Replication tool ( XDR ) to send data from a source cluster to the destination cluster seamlessly. The problem sometimes encountered in exposing a cluster to the outside world is the organisation's security restriction policies. By placing a proxy server in front of the private Kubernetes destination cluster can overcome this problem an achieve the desired goal. To demonstrate the solution we will first start by installing the Kubernetes operator that will schedule our said source and destination databases.
 
