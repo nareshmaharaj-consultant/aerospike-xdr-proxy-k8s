@@ -1,0 +1,84 @@
+apiVersion: asdb.aerospike.com/v1beta1
+kind: AerospikeCluster
+metadata:
+  name: aerocluster-dest-xdr
+  namespace: aerospike
+
+spec:
+  size: 1
+  image: aerospike/aerospike-server-enterprise:6.1.0.2
+
+  storage:
+    filesystemVolumePolicy:
+      initMethod: deleteFiles
+      cascadeDelete: true
+    blockVolumePolicy:
+      cascadeDelete: true
+    volumes:
+      - name: workdir
+        aerospike:
+          path: /opt/aerospike
+        source:
+          persistentVolume:
+            storageClass: ssd
+            volumeMode: Filesystem
+            size: 1Gi
+      - name: ns
+        aerospike:
+          path: /opt/aerospike/data/
+        source:
+          persistentVolume:
+            storageClass: ssd
+            volumeMode: Filesystem
+            size: 1Gi
+      - name: aerospike-config-secret
+        source:
+          secret:
+            secretName: aerospike-secret
+        aerospike:
+          path: /etc/aerospike/secret
+
+  podSpec:
+    multiPodPerHost: true
+
+  aerospikeAccessControl:
+    roles:
+      - name: writer
+        privileges:
+        - read-write
+      - name: reader
+        privileges:
+        - read
+    users:
+      - name: admin
+        secretName: auth-secret
+        roles:
+          - sys-admin
+          - user-admin
+          - read-write
+      - name: xdr-writer
+        secretName: xdr-user-auth-secret
+        roles:
+          - writer
+
+  aerospikeConfig:
+    service:
+      feature-key-file: /etc/aerospike/secret/features.conf
+    security: {}
+    network:
+      service:
+        port: 3000
+      fabric:
+        port: 3001
+      heartbeat:
+        port: 3002
+    namespaces:
+      - name: test
+        memory-size: 134217728
+        replication-factor: 1
+        storage-engine:
+          type: device
+          files:
+            - /opt/aerospike/data/test.dat
+          filesize: 1073741824
+          data-in-memory: true

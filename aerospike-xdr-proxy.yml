@@ -1,0 +1,34 @@
+# Change the configuration for your use case.
+# Naresh Maharaj
+# Refer to https://www.aerospike.com/docs/connectors/enterprise/xdr-proxy/configuration/index.html
+# for details.
+
+# The connector's listening ports, manage service, TLS and network interface.
+service:
+  port: 8901
+  # Aerospike Enterprise Server >= 5.0
+  manage:
+    address: 0.0.0.0
+    port: 8902
+
+# The destination aerospike cluster.
+aerospike:
+  seeds:
+    - aerocluster-dest-xdr-0-0.aerospike.svc.cluster.local:
+        port: 3000
+  credentials:
+    username: admin
+    password-file: /etc/aerospike-xdr-proxy/auth/password_DC1.txt
+    auth-mode: internal
+
+# The logging config
+logging:
+  enable-console-logging: true
+  file: /var/log/aerospike-xdr-proxy/aerospike-xdr-proxy.log
+  levels:
+    root: debug
+    record-parser: debug
+    server: debug
+    com.aerospike.connect: debug
+  # Ticker log interval in seconds
+  ticker-interval: 3600

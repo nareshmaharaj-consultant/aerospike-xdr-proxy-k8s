@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xdr-proxy
+  namespace: aerospike
+  labels:
+    app: xdr-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: xdr-proxy
+  template:
+    metadata:
+      labels:
+        app: xdr-proxy
+    spec:
+      containers:
+      - name: xdr-proxy
+        image: aerospike/aerospike-xdr-proxy:2.1.0
+        volumeMounts:
+        - name: xdr-proxy-dir
+          mountPath: "/etc/aerospike-xdr-proxy/"
+          readOnly: true
+        - name: xdr-auth-dir
+          mountPath: "/etc/aerospike-xdr-proxy/auth"
+          readOnly: true
+        ports:
+          - name: xdr-proxy-main
+            containerPort: 8901
+          - name: xdr-proxy-mng
+            containerPort: 8902
+      volumes:
+      - name: xdr-proxy-dir
+        configMap:
+          name: xdr-proxy-cfg
+          optional: false
+      - name: xdr-auth-dir
+        secret:
+          secretName: xdr-proxy-auth-secret
+          optional: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xdr-proxy
+  namespace: aerospike
+spec:
+  selector:
+    app: xdr-proxy
+  ports:
+  - name: main
+    protocol: TCP
+    port: 8901
+    targetPort: xdr-proxy-main
+  - name: manage
+    protocol: TCP
+    port: 8902
+    targetPort: xdr-proxy-mng
