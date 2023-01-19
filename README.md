@@ -3,7 +3,7 @@
 <img width="1000" src="img.png">
 </p>
 
-In this article we focus on establishing 2 separate Kubernetes clusters both each hosting the Aerospike low latency database. The goal is to be able to use Aerospike's Cross Data centre Replication tool ( XDR ) to send data from a source cluster to the destination cluster seamlessly. The problem sometimes encountered in exposing a cluster to the outside world is the organisation's security restriction policies. By placing a proxy server in front of the private Kubernetes destination cluster can overcome this problem an achieve the desired goal. To demonstrate the solution we will first start by installing the Kubernetes operator that will schedule our said source and destination databases.
+In this article we focus on establishing connectivity between 2 Aerospike clusters. The goal is to use Aerospike's Cross Data Center Replication feature ( XDR ) to seamlessly send data from a source cluster to a destination cluster. The source cluster needs network visibility of all Aerospike service ports in the remote cluster, and this can present problems, particularly in a Kubernetes environment. Placing a proxy server in front of the private Kubernetes destination cluster can overcome this problem and achieve the desired goal. To demonstrate the solution we start by installing the Kubernetes Operator that will schedule our source and destination databases. In this example, we set up our replication in one direction. Aerospike is capable of supporting 'master/master' replication and provides a conflict resolution [mechanism](https://docs.aerospike.com/server/architecture/xdr#bin-convergence-in-mesh-topology) in the event of update clashes. This too could be supported using the XDR proxy.
 
 <div className="text--center">
 
@@ -14,7 +14,7 @@ In this article we focus on establishing 2 separate Kubernetes clusters both eac
 
 ## Aerospike Kubernetes Operator
 
-The following Kubernetes nodes have been created using EKS. You can see the following private and public IP addresses from listing the nodes with the kubectl command.
+The following Kubernetes nodes have been created using EKS. You can display the following private and public IP addresses from listing the nodes with the kubectl command.
 
 ```bash
 kubectl get nodes -o wide
@@ -27,19 +27,21 @@ ip-192-168-59-220.ec2.internal   Ready    <none>   2m52s   v1.22.15-eks-fb459a0 
 ip-192-168-6-124.ec2.internal    Ready    <none>   2m51s   v1.22.15-eks-fb459a0   192.168.6.124    35.174.60.1      Amazon Linux 2   5.4.219-126.411.amzn2.x86_64   docker://20.10.1
 ```
 
-Start by getting a copy of the Aerospike git repo for the k8s operator.
+Start by getting a copy of the Aerospike git repo for the Kubernetes Operator.
 
 ```bash
 git clone https://github.com/aerospike/aerospike-kubernetes-operator.git
 cp features.conf aerospike-kubernetes-operator/config/samples/secrets/.
 ```
 
-### Setup.
+### Setup
+
+Run the following commands in the order specified. Wait for the csv "Succeeded phase" to show up after running this line. Initially it might take between 30 seconds and a minute to show up.
+_kubectl get csv -n operators -w_
 
 ```bash
 cd aerospike-kubernetes-operator/
 kubectl apply -f config/samples/storage/eks_ssd_storage_class.yaml
-kubectl apply -f config/samples/storage/local_storage_class.yaml
 curl -sL https://github.com/operator-framework/operator-lifecycle-manager/releases/download/v0.22.0/install.sh | bash -s v0.22.0
 kubectl create -f https://operatorhub.io/install/aerospike-kubernetes-operator.yaml
 kubectl get csv -n operators -w
@@ -52,10 +54,9 @@ kubectl -n aerospike create secret generic aerospike-secret --from-file=config/s
 kubectl -n aerospike create secret generic auth-secret --from-literal=password='admin123'
 ```
 
+## Destination Cluster
 
-## Destination Cluster.
-
-Install the **_destination_** cluster first by using the following configuration
+Use the following yaml configuration file for our **destination** cluster. Save the file and name it ssd1_xdr_dest_6.1_cluster_cr.yaml:
 
 ```yaml
 apiVersion: asdb.aerospike.com/v1beta1
@@ -144,9 +145,9 @@ spec:
           data-in-memory: true
 ```
 
-Create the following Aerospike destination resources
-- database login credentials using k8s secrets
-- schedule the destination single node database cluster.
+Create the following Kubernetes resources for our Aerospike destination cluster:
+- xdr destination database user login credentials, as a Kubernetes secret
+- destination database cluster using our yaml file named ssd1_xdr_dest_6.1_cluster_cr.yaml
 
 ```bash
 export secret_auth_name=xdr-user-auth-secret
@@ -156,7 +157,7 @@ kubectl create -f ssd1_xdr_dest_6.1_cluster_cr.yaml
 kubectl -n aerospike get po -w
 ```
 
-You should see the database pods successfully running.
+You should see the database pods running successfully.
 
 ```bash
 kubectl get po -n aerospike -w
@@ -167,13 +168,13 @@ aerocluster-dest-xdr-0-0   0/1     PodInitializing   0          19s
 aerocluster-dest-xdr-0-0   1/1     Running           0          24s
 ```
 
-## XDR-Proxy.
+## XDR-Proxy
 
-Next we set up the xdr-proxy. If we look back at the main title image above, you will notice that we are working from the RIGHT hand side to the LEFT hand side in that order.
+Next we set up the **_xdr-proxy_**. If we look back at the main title image above, you will notice that we are working from the RIGHT hand side to the LEFT hand side in that order.
 
 ### Configuration
 
-Go ahead and create the following **_xdr-proxy_** configuration file. Replace the seed address with a FQN DNS name for the destination database pod(s) you created earlier. If you have more than one seed address now is the time to add them to the yaml list.
+Create the following **_xdr-proxy_** configuration file. Replace the seeds address with a FQN DNS name for the destination database pod(s) you created earlier. Multiple seed addresses may be added (recommended in production).
 
 ```yaml
 cd ..
@@ -200,7 +201,7 @@ aerospike:
     - aerocluster-dest-xdr-0-0.aerospike.svc.cluster.local:
         port: 3000
   credentials:
-    username: admin
+    username: xdr-writer
     password-file: /etc/aerospike-xdr-proxy/auth/password_DC1.txt
     auth-mode: internal
 
@@ -220,6 +221,7 @@ EOF
 sudo tee auth/password_DC1.txt <<EOF
 admin123
 EOF
+cd ..
 
 kubectl -n aerospike create configmap xdr-proxy-cfg --from-file=etc/
 kubectl -n aerospike create secret generic xdr-proxy-auth-secret --from-file=etc/auth
@@ -308,7 +310,7 @@ xdr-proxy-7d9fccd6c8-mjxp4   1/1     Running   0          2m26s
 
 ## Source Cluster
 
-Create the **_source_** cluster using the following configuration
+Create the **_source_** Aerospike cluster using the following configuration
 
 ```yaml
 cd ../aerospike-kubernetes-operator/
@@ -408,7 +410,7 @@ kubectl create -f ssd1_xdr_src_6.1_cluster_cr.yaml
 kubectl get po -n aerospike -w
 ```
 
-From the source cluster, confirm the xdr component has made a connection to the xdr-proxy by filtering the k8s log file as shown in the following kubectl command.
+From the source cluster, confirm the xdr component has made a connection to the xdr-proxy by filtering the Kubernetes log file as shown in the following kubectl command.
 
 ```bash
 kubectl -n aerospike logs aerocluster-source-xdr-0-0 -c aerospike-server | grep xdr | grep conn
@@ -447,16 +449,6 @@ aql> select * from test
 Connect to the destination cluster in the same way and confirm data has successfully arrived.
 
 ```bash
-kubectl get svc -n aerospike
-NAME                         TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
-aerocluster-dest-xdr         ClusterIP   None             <none>        3000/TCP            3h38m
-aerocluster-dest-xdr-0-0     NodePort    10.100.226.179   <none>        3000:30168/TCP      3h38m
-aerocluster-source-xdr       ClusterIP   None             <none>        3000/TCP            33m
-aerocluster-source-xdr-0-0   NodePort    10.100.116.173   <none>        3000:31999/TCP      33m
-xdr-proxy                    ClusterIP   10.100.44.96     <none>        8901/TCP,8902/TCP   41m
-```
-
-```bash
 kubectl run -it --rm --restart=Never aerospike-tool -n aerospike --image=aerospike/aerospike-tools:latest -- aql -U admin -P admin123 -h aerocluster-dest-xdr-0-0
 Run the following select query in the destination cluster.
 aql> select * from test
@@ -486,7 +478,7 @@ kubectl logs xdr-proxy-7d9fccd6c8-f5zkt -n aerospike | grep record-parser
 
 ## Scaling the XDR-Proxies
 
-Go ahead and scale up the xdr-proxy to 6 pods.
+Go ahead and scale up the xdr-proxy to 6 pods by editing the file xdr-proxy-deployment.yaml and then applying the changes.
 
 ```yaml
 apiVersion: apps/v1
@@ -505,7 +497,13 @@ spec:
 kubectl apply -f xdr-proxy-deployment.yaml
 ```
 
-We should now have 6 instances of the xdr-proxies running.
+You can also achieve the same by running the following command
+
+```bash
+kubectl scale deploy xdr-proxy -n aerospike --replicas=6
+```
+
+You should now have 6 instances of the xdr-proxies running.
 
 ```bash
 kubectl get po -n aerospike -w
@@ -531,7 +529,8 @@ aql> insert into test (PK,a,b) values (7,"A","B")
 OK, 1 record affected.
 ```
 
-Notice how we have userKey=5, userKey=6 and userKey=7 across the new scaled xdr-proxies.
+Notice how we have userKey=5, userKey=6 and userKey=7 across the newly scaled xdr-proxies.
+
 ```bash
 kubectl logs xdr-proxy-7d9fccd6c8-5q7gn -n aerospike | grep record-parser
 2022-12-08 14:53:50.607 GMT DEBUG record-parser - parsed message fields: key=Key(namespace='test', set=a1, digest=[120, 48, -23, -90, 110, 126, 84, -1, 114, -116, -9, -21, 28, 75, 126, -68, -51, 83, 31, -117], userKey=1, lastUpdateTimeMs=1670511230565, userKeyString=1, digestString='eDDppm5+VP9yjPfrHEt+vM1TH4s=')
@@ -553,11 +552,11 @@ kubectl logs xdr-proxy-7d9fccd6c8-r56vs -n aerospike | grep record-parser
 (none)
 ```
 
-However, one should be aware that when data is actively flowing between source and destination clusters, there is no reset on the source connections, so the newly scaled xdr-proxies will not be utilised.
+When data is actively flowing between source and destination clusters, the existing cached list of xdr-proxy connections from the source cluster is not refreshed, so the newly scaled xdr-proxies we have just scheduled will not be utilized immediately.
 
-We can go ahead and prove this out. Lets try adding some data using the Aerospike's benchmark tool which will ingest data into the source cluster. At the same time we will scale the xdr-proxies on the destination side and see the result. Before we start however, it might be prudent to first scale down the xdr-proxy servers to 1 so there is no possibility of misconstrued results.
+To demonstrate, let's add data to the source cluster using Aerospike's benchmark tool. At the same time, we will scale the xdr-proxies on the destination side and observe the results. Before we start, we reduce the xdr-proxy server count to 1 to make the observations clear.
 
-I am going to use my own local machine which has the benchmark tool already installed to send data to the source ec2  instances. In order to do this we need to get the external IP address of the service.
+I use my own local machine which has the benchmark tool already installed to send data to the source EC2 instances. In order to do this, we need to get the external IP address of the service.
 
 ```bash
 kubectl get AerospikeCluster aerocluster-source-xdr -n aerospike  -o yaml
@@ -590,15 +589,15 @@ pods:
 ...
 ```
 
-Add the AWS firewall rule to allow traffic into the k8s service. Connect the asbenchmark tool to start writing traffic using the public IP address for the NodePort Service.
+Add the AWS firewall rule to allow traffic into the Kubernetes service. Connect the `asbenchmark` tool to start writing traffic using the public IP address for the NodePort Service.
 
 ```bash
 asbenchmark -h 54.173.138.131:31999 -Uadmin -Padmin123 -z 10 -servicesAlternate -w RU,0 -o B256
 ```
 
-Scale up the xdr-proxy servers from 1 to 2 and check the logs of both proxies to see what messages are being received. In a production environment you should disable the logging.
+Scale up the xdr-proxy servers from 1 to 2, and check the logs of both proxies to see what messages they received. In a production environment, you should disable the logging.
 
-Notice how the new xdr-proxy instance `xdr-proxy-7d9fccd6c8-s2tzt` has no data passed through it.
+Notice that no data has passed through the new xdr-proxy instance `xdr-proxy-7d9fccd6c8-s2tzt`.
 
 ```bash
 kubectl -n aerospike logs xdr-proxy-7d9fccd6c8-s2tzt | grep record-parser
@@ -625,4 +624,4 @@ kubectl -n aerospike logs xdr-proxy-7d9fccd6c8-5q7gn | grep record-parser
 ```
 
 ## Conclusion
-Aerospike renowned for its core resiliency has an industry established uptime of 5 x 9s - that's basically ( 0.99999 ). So adding to the data resiliency matrix, XDR now means its possible to have an additional copy of the data distributed asynchronously from one data-centre to another with minimal effort. Taking this one step further, we have shown how this can be achieved using the xdr-proxy to access k8s clusters in a private network. All this has been achieved with minimum effort thanks to the Aerospike Kubernetes Operator. 
+Dependable resiliency is a core part of the Aerospike value proposition. Aerospike's XDR feature ensures that users can mitigate the risk of a cluster becoming unavailable by replicating data asynchronously from one data center to another. We show here how you can achieve this in a Kubernetes environment by using the xdr-proxy, allowing you to avoid network complications. All this has been achieved with minimum effort thanks to the Aerospike Kubernetes Operator. 
